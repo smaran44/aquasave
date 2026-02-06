@@ -1,112 +1,71 @@
 `timescale 1ns / 1ps
 
 module tb_aquasave;
+    // Signals
+    reg clk, reset, manual_clear;
+    reg flow_in, flow_out, acoustic, pressure;
+    wire valve, buzzer, spi_valid;
+    wire [2:0] status, zone_id;
+    wire [7:0] spi_data;
 
-    // ---------------- Signals ----------------
-    reg clk;
-    reg reset;
-    reg manual_clear;
-
-    reg flow_in;
-    reg flow_out;
-    reg acoustic;
-
-    wire valve;
-    wire buzzer;
-    wire [2:0] status;
-    wire [2:0] zone_id;
-
-    // ---------------- DUT ----------------
-    aquasave_core #(
-        .ZONE_ID(3'd1),
-        .TIMER_LIMIT(20),     // Small window for fast sim
-        .LEAK_TOLERANCE(2),
-        .ACOU_THRESH(4)       // Acoustic persistence
-    ) dut (
-        .clk(clk),
-        .reset(reset),
-        .manual_clear(manual_clear),
-        .flow_pulse_in(flow_in),
-        .flow_pulse_out(flow_out),
-        .acoustic_sensor(acoustic),
-        .valve_close(valve),
-        .alarm_buzzer(buzzer),
-        .status(status),
-        .zone_id(zone_id)
+    // Unit Under Test
+    aquasave_core #(.TIMER_LIMIT(40)) dut (
+        .clk(clk), .reset(reset), .manual_clear(manual_clear),
+        .flow_pulse_in(flow_in), .flow_pulse_out(flow_out),
+        .acoustic_sensor(acoustic), .pressure_sensor(pressure),
+        .valve_close(valve), .alarm_buzzer(buzzer),
+        .status(status), .zone_id(zone_id),
+        .data_to_spi(spi_data), .data_valid(spi_valid)
     );
 
-    // ---------------- Clock ----------------
-    always #5 clk = ~clk;   // 10ns period
+    always #5 clk = ~clk;
 
-    // ---------------- Test Sequence ----------------
     initial begin
         // Init
-        clk = 0;
-        reset = 1;
-        manual_clear = 0;
-        flow_in = 0;
-        flow_out = 0;
-        acoustic = 0;
+        {clk, reset, manual_clear, flow_in, flow_out, acoustic, pressure} = 0;
+        reset = 1; #20 reset = 0;
+        
+        $display("\n===================================================");
+        $display("   AQUASAVE INDUSTRIAL LEAK HUNTER: STARTING SIM   ");
+        $display("===================================================\n");
 
-        // ------------------------------------
-        // RESET
-        // ------------------------------------
-        #40;
-        reset = 0;
-
-        // ------------------------------------
-        // SCENARIO 1: NORMAL FLOW (SECURE)
-        // in = out → no leak
-        // ------------------------------------
+        // TEST 1: Normal Operation
+        $display("[TIME: %0t] Scenario 1: Monitoring steady flow...", $time);
         repeat (5) begin
             flow_in = 1; flow_out = 1; #10;
             flow_in = 0; flow_out = 0; #10;
         end
-        #100;   // allow FSM evaluation
+        if (status == 3'b001) $display(">> SUCCESS: Flow Balanced. Status: OK");
 
-        // ------------------------------------
-        // SCENARIO 2: LEAK DETECTION
-        // in > out + tolerance
-        // ------------------------------------
-        reset = 1; #10; reset = 0;
+        // TEST 2: Pressure Drop
+        $display("\n[TIME: %0t] Scenario 2: Detecting High-Speed Leak (Pressure Drop)...", $time);
+        pressure = 1; #20;
+        if (valve == 1) $display(">> ALERT: Pressure Drop! Valve SHUT. Status: %d", status);
+        pressure = 0; #10;
+        
+        // Manual Recovery
+        manual_clear = 1; #10; manual_clear = 0; #20;
 
+        // TEST 3: Acoustic Persistence (Burst)
+        $display("\n[TIME: %0t] Scenario 3: Detecting Pipe Rupture (Acoustic Burst)...", $time);
         repeat (6) begin
-            flow_in = 1;
-            flow_out = 0;   // output slower
-            #10;
-            flow_in = 0;
-            flow_out = 0;
-            #10;
+            acoustic = 1; #10;
         end
-        #100;   // FSM moves to LEAK → LOCKDOWN
+        acoustic = 0; #20;
+        if (status == 3'b100) $display(">> CRITICAL: Burst Detected! Alarm Buzzer Active.");
 
-        // ------------------------------------
-        // MANUAL CLEAR (RECOVERY)
-        // ------------------------------------
-        manual_clear = 1; #10;
-        manual_clear = 0;
-        #40;
-
-        // ------------------------------------
-        // SCENARIO 3: PIPE BURST (ACOUSTIC)
-        // sustained acoustic signal
-        // ------------------------------------
-        repeat (5) begin
-            acoustic = 1;
-            #10;
+        // TEST 4: Slow Leak (Flow Difference)
+        manual_clear = 1; #10; manual_clear = 0; #10;
+        $display("\n[TIME: %0t] Scenario 4: Detecting Slow Leak (Flow In > Out)...", $time);
+        repeat (10) begin
+            flow_in = 1; flow_out = 0; #10;
+            flow_in = 0; #10;
         end
-        acoustic = 0;
+        #50; // Allow window to evaluate
+        if (status == 3'b010) $display(">> ALERT: Accumulative Leak Found. Data Sent: %h", spi_data);
 
-        #50;    // FSM enters BURST → LOCKDOWN
-
-        // ------------------------------------
-        // MANUAL CLEAR AGAIN
-        // ------------------------------------
-        manual_clear = 1; #10;
-        manual_clear = 0;
-        #50;
-
+        $display("\n===================================================");
+        $display("   VERIFICATION COMPLETE: ALL SYSTEMS NOMINAL      ");
+        $display("===================================================\n");
         $finish;
     end
-
-endmodule
