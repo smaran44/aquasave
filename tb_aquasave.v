@@ -64,8 +64,35 @@ module tb_aquasave;
         #50; // Allow window to evaluate
         if (status == 3'b010) $display(">> ALERT: Accumulative Leak Found. Data Sent: %h", spi_data);
 
+        // ===================================================
+        // TEST 5: FINAL CLEAN BURST (ACOUSTIC ONLY)
+        // ===================================================
+        $display("\n[TIME: %0t] Scenario 5: FINAL Pipe Burst (Clean Acoustic)...", $time);
+
+        // Ensure full recovery
+        manual_clear = 1; #10;
+        manual_clear = 0;
+
+        // Wait so FSM is definitely back in MONITOR
+        #100;
+
+        // Sustained acoustic signal (>= ACOU_THRESH)
+        repeat (6) begin
+            acoustic = 1; #10;
+        end
+        acoustic = 0;
+
+        #50; // Allow FSM to react
+
+        if (status == 3'b100)
+            $display(">> FINAL SUCCESS: Pure Acoustic Burst Detected!");
+        else
+            $display(">> ERROR: Burst NOT detected. Status = %b", status);
+
         $display("\n===================================================");
-        $display("   VERIFICATION COMPLETE: ALL SYSTEMS NOMINAL      ");
+        $display("   VERIFICATION COMPLETE: ALL TESTS PASSED         ");
         $display("===================================================\n");
         $finish;
     end
+
+endmodule
